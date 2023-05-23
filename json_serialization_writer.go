@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,12 +13,6 @@ import (
 	abstractions "github.com/microsoft/kiota-abstractions-go"
 	absser "github.com/microsoft/kiota-abstractions-go/serialization"
 )
-
-var buffPool = sync.Pool{
-	New: func() interface{} {
-		return new(bytes.Buffer)
-	},
-}
 
 // JsonSerializationWriter implements SerializationWriter for JSON.
 type JsonSerializationWriter struct {
@@ -33,22 +26,13 @@ type JsonSerializationWriter struct {
 // NewJsonSerializationWriter creates a new instance of the JsonSerializationWriter.
 func NewJsonSerializationWriter() *JsonSerializationWriter {
 	return &JsonSerializationWriter{
-		writer:           buffPool.Get().(*bytes.Buffer),
+		writer:           new(bytes.Buffer),
 		separatorIndices: make([]int, 0),
 	}
 }
-func (w *JsonSerializationWriter) getWriter() *bytes.Buffer {
-	if w.writer == nil {
-		panic("The writer has already been closed. Call Reset instead of Close to reuse it or instantiate a new one.")
-	}
-
-	return w.writer
-}
 func (w *JsonSerializationWriter) writeRawValue(value ...string) {
-	writer := w.getWriter()
-
 	for _, v := range value {
-		writer.WriteString(v)
+		w.writer.WriteString(v)
 	}
 }
 func (w *JsonSerializationWriter) writeStringValue(value string) {
@@ -64,7 +48,7 @@ func (w *JsonSerializationWriter) writePropertyName(key string) {
 	w.writeRawValue("\"", key, "\":")
 }
 func (w *JsonSerializationWriter) writePropertySeparator() {
-	w.separatorIndices = append(w.separatorIndices, w.getWriter().Len())
+	w.separatorIndices = append(w.separatorIndices, w.writer.Len())
 	w.writeRawValue(",")
 }
 func (w *JsonSerializationWriter) writeArrayStart() {
@@ -623,16 +607,16 @@ func (w *JsonSerializationWriter) WriteCollectionOfInt8Values(key string, collec
 
 // GetSerializedContent returns the resulting byte array from the serialization writer.
 func (w *JsonSerializationWriter) GetSerializedContent() ([]byte, error) {
-	trimmed := w.getWriter().Bytes()
+	trimmed := w.writer.Bytes()
 	buffLen := len(trimmed)
 
 	for i := len(w.separatorIndices) - 1; i >= 0; i-- {
 		idx := w.separatorIndices[i]
 
 		if idx == buffLen-1 {
-			trimmed = trimmed[:idx]
+			trimmed = trimmed[0:idx]
 		} else if trimmed[idx+1] == byte(']') || trimmed[idx+1] == byte('}') {
-			trimmed = append(trimmed[:idx], trimmed[idx+1:]...)
+			trimmed = append(trimmed[0:idx], trimmed[idx+1:]...)
 		}
 	}
 
@@ -796,24 +780,9 @@ func (w *JsonSerializationWriter) WriteAdditionalData(value map[string]interface
 	return err
 }
 
-// Reset sets the internal buffer to empty, allowing the writer to be reused.
-func (w *JsonSerializationWriter) Reset() error {
-	w.getWriter().Reset()
-	w.separatorIndices = w.separatorIndices[:0]
-	return nil
-}
-
-// Close relases the internal buffer. Subsequent calls to the writer will panic.
+// Close clears the internal buffer.
 func (w *JsonSerializationWriter) Close() error {
-	if w.writer == nil {
-		return nil
-	}
-
-	w.writer.Reset()
-	buffPool.Put(w.writer)
-
-	w.writer = nil
-	w.separatorIndices = nil
-
+	w.writer = new(bytes.Buffer)
+	w.separatorIndices = make([]int, 0)
 	return nil
 }
